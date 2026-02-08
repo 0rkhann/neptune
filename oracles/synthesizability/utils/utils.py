@@ -10,8 +10,7 @@ from oracles.synthesizability.utils.CONSTANTS import FUNCTIONAL_GROUPS
 
 
 def match_stock(
-    query_smiles: str, 
-    enforced_building_blocks_file: str
+    query_smiles: str, enforced_building_blocks_file: str
 ) -> Tuple[bool, str]:
     """
     Check if the query SMILES is in the building blocks stock.
@@ -23,20 +22,19 @@ def match_stock(
                 return True, canonicalized_block_smiles
     return False, None
 
+
 def get_max_stock_similarity(
-    query_smiles: str, 
-    enforced_building_blocks_fps: List[np.ndarray[int]]
+    query_smiles: str, enforced_building_blocks_fps: List[np.ndarray[int]]
 ) -> float:
     """
     Get the max Tanimoto similarity of the query SMILES to the enforced building blocks stock.
     """
     query_fp = construct_morgan_fingerprint(query_smiles)
-    return np.max([BulkTanimotoSimilarity(query_fp, enforced_building_blocks_fps)])      
+    return np.max([BulkTanimotoSimilarity(query_fp, enforced_building_blocks_fps)])
+
 
 def matched_fuzzy_substructure(
-    generated_smiles: str, 
-    enforced_blocks: List[Mol],
-    threshold: float = 0.50
+    generated_smiles: str, enforced_blocks: List[Mol], threshold: float = 0.50
 ) -> bool:
     """
     Check if the generated SMILES matches threshold % of the reference blocks' structures.
@@ -48,12 +46,12 @@ def matched_fuzzy_substructure(
 
         # Find Maximum Common Substructure (MCS)
         mcs_result = rdFMCS.FindMCS(
-            mols=[generated_mol, eb], 
+            mols=[generated_mol, eb],
             matchChiralTag=True,  # Chirality has to match
             bondCompare=rdFMCS.BondCompare.CompareOrderExact,  # Bond order has to match, i.e., single and aromatic are different
             ringCompare=rdFMCS.RingCompare.StrictRingFusion,  # Rings have to match
-            completeRingsOnly=True  # Only consider complete rings
-        ) 
+            completeRingsOnly=True,  # Only consider complete rings
+        )
 
         # Number of atoms in the MCS
         mcs_num_atoms = mcs_result.numAtoms
@@ -63,7 +61,10 @@ def matched_fuzzy_substructure(
             return True
     return False
 
-def extract_functional_groups(smiles: Union[str, List[str]]) -> Union[List[str], Dict[str, List[str]]]:
+
+def extract_functional_groups(
+    smiles: Union[str, List[str]],
+) -> Union[List[str], Dict[str, List[str]]]:
     """
     Extract the functional groups present in the given SMILES or SMILES list.
     """
@@ -87,12 +88,15 @@ def extract_functional_groups(smiles: Union[str, List[str]]) -> Union[List[str],
             functional_groups_present[smiles] = current_fg_present
         return functional_groups_present
     else:
-        raise ValueError("Invalid input type for smiles. Please provide a single SMILES or a list of SMILES.")
+        raise ValueError(
+            "Invalid input type for smiles. Please provide a single SMILES or a list of SMILES."
+        )
+
 
 def matched_functional_groups(
-    query_smiles: str, 
-    enforced_blocks_functional_groups: Set[str], 
-    threshold: float = 0.75
+    query_smiles: str,
+    enforced_blocks_functional_groups: Set[str],
+    threshold: float = 0.75,
 ) -> bool:
     """
     Check if the query SMILES matches threshold % of the functional groups.
@@ -111,9 +115,10 @@ def matched_functional_groups(
             count += 1
     return count > int(len(query_functional_groups) * threshold)
 
+
 def functional_groups_overlap(
-    query_smiles: str, 
-    enforced_blocks_functional_groups: Dict[str, List[str]], 
+    query_smiles: str,
+    enforced_blocks_functional_groups: Dict[str, List[str]],
 ) -> float:
     """
     Calculate the *mean* of the fraction of overlap between the query SMILES and each enforced blocks' functional groups.
@@ -127,6 +132,7 @@ def functional_groups_overlap(
 
     return sum(fraction_overlaps) / len(fraction_overlaps)
 
+
 def fuzzy_matching_substructure(
     query_smiles: str,
     enforced_blocks_functional_groups: Dict[str, List[str]],
@@ -135,26 +141,28 @@ def fuzzy_matching_substructure(
     Calculate the *max* substructure overlap between the query SMILES and each enforced block.
     """
 
-    def _query_is_in_bbs(query_mol: str, 
-                         enforced_blocks_mols: List[Mol]
-    ) -> bool:
+    def _query_is_in_bbs(query_mol: str, enforced_blocks_mols: List[Mol]) -> bool:
         """
         Return True if query mol is in enforced building blocks.
         """
         canon_query = Chem.MolToSmiles(query_mol)
 
         # Edge case when score != 1 but the block is enforced
-        canonicalized_bbs_smiles = [Chem.MolToSmiles(mol) 
-                                    for mol in enforced_blocks_mols]
-        
-        is_in_bbs = any([
-            (canon_query == smiles) for smiles in canonicalized_bbs_smiles
-        ])
-        
+        canonicalized_bbs_smiles = [
+            Chem.MolToSmiles(mol) for mol in enforced_blocks_mols
+        ]
+
+        is_in_bbs = any(
+            [(canon_query == smiles) for smiles in canonicalized_bbs_smiles]
+        )
+
         return True if is_in_bbs else False
 
     query_mol = Chem.MolFromSmiles(query_smiles)
-    enforced_blocks_mols = [Chem.MolFromSmiles(smiles) for smiles in enforced_blocks_functional_groups.keys()]
+    enforced_blocks_mols = [
+        Chem.MolFromSmiles(smiles)
+        for smiles in enforced_blocks_functional_groups.keys()
+    ]
     max_mcs_atoms = 0
 
     # Edge case if query mol is in enforced building blocks
@@ -166,12 +174,12 @@ def fuzzy_matching_substructure(
 
         # Perform MCS (find Maximum Common Substructure)
         mcs_result = rdFMCS.FindMCS(
-                mols=[query_mol, block_mol],
-                matchChiralTag=True,
-                bondCompare=rdFMCS.BondCompare.CompareOrderExact,
-                ringCompare=rdFMCS.RingCompare.StrictRingFusion,
-                completeRingsOnly=True
-            )
+            mols=[query_mol, block_mol],
+            matchChiralTag=True,
+            bondCompare=rdFMCS.BondCompare.CompareOrderExact,
+            ringCompare=rdFMCS.RingCompare.StrictRingFusion,
+            completeRingsOnly=True,
+        )
         overlap = mcs_result.numAtoms / block_mol.GetNumAtoms()
         if int(overlap) == 1:
 
@@ -182,68 +190,119 @@ def fuzzy_matching_substructure(
             Chem.RemoveStereochemistry(query_mol_copy)
             Chem.RemoveStereochemistry(block_mol_copy)
 
-            if (
-                canonicalize_smiles(query_smiles) == canonicalize_smiles(Chem.MolToSmiles(block_mol)) 
-                or Chem.MolToSmiles(query_mol_copy, canonical=True) == Chem.MolToSmiles(block_mol_copy, canonical=True)
+            if canonicalize_smiles(query_smiles) == canonicalize_smiles(
+                Chem.MolToSmiles(block_mol)
+            ) or Chem.MolToSmiles(query_mol_copy, canonical=True) == Chem.MolToSmiles(
+                block_mol_copy, canonical=True
             ):
                 return 1.0
 
             # Edge case
             else:
                 asymmetric_overlap = mcs_result.numAtoms / query_mol.GetNumAtoms()
-                assert int(asymmetric_overlap) != 1, "Asymmetric FMS error"
+                block_smiles = Chem.MolToSmiles(block_mol, canonical=True)
+                query_canon = Chem.MolToSmiles(query_mol, canonical=True)
+                query_no_stereo = Chem.MolToSmiles(deepcopy(query_mol), canonical=True)
+                block_no_stereo = Chem.MolToSmiles(deepcopy(block_mol), canonical=True)
+                print(
+                    f"[FMS] Asymmetric overlap edge case:\n"
+                    f"  query_smiles (input):    {query_smiles}\n"
+                    f"  query_smiles (canon):    {query_canon}\n"
+                    f"  query_smiles (no stereo): {query_no_stereo}\n"
+                    f"  block_smiles (canon):    {block_smiles}\n"
+                    f"  block_smiles (no stereo): {block_no_stereo}\n"
+                    f"  MCS atoms: {mcs_result.numAtoms}, query atoms: {query_mol.GetNumAtoms()}, block atoms: {block_mol.GetNumAtoms()}\n"
+                    f"  overlap (mcs/block): {overlap:.4f}, asymmetric (mcs/query): {asymmetric_overlap:.4f}\n"
+                    f"  MCS SMARTS: {mcs_result.smartsString}",
+                    flush=True,
+                )
+                assert int(asymmetric_overlap) != 1, (
+                    f"Asymmetric FMS error: query='{query_smiles}', block='{block_smiles}', "
+                    f"MCS={mcs_result.numAtoms} atoms"
+                )
                 return asymmetric_overlap
         else:
             max_mcs_atoms = max(max_mcs_atoms, overlap)
     return max_mcs_atoms
-    
+
+
 def tango_reward(
-    query_smiles: str, 
+    query_smiles: str,
     enforce_blocks_fps: List[np.ndarray[int]],
     enforced_blocks_functional_groups: Dict[str, List[str]],
     reward_type: str,
-    tango_weights: Dict[str, float]
+    tango_weights: Dict[str, float],
+    synthesizability_factor: float = 1.0,
 ) -> float:
     """
-    Calculate all TANGO rewards.
+    Calculate all TANGO rewards with optional synthesizability factor.
+
+    Args:
+        query_smiles: SMILES string to evaluate
+        enforce_blocks_fps: Fingerprints of enforced building blocks
+        enforced_blocks_functional_groups: Functional groups of enforced blocks
+        reward_type: Type of TANGO reward (tango_fg, tango_fms, tango_all)
+        tango_weights: Weights for tanimoto, fg, and fms components
+        synthesizability_factor: Multiplicative factor (0-1) representing synthesizability.
+                                 This is automatically computed by retrosynthetic tools and raised
+                                 to a power (s^power) before being applied. Default is 1.0.
+                                 Final reward: reward = (s^power) * tango
+
+    Returns:
+        TANGO reward scaled by synthesizability factor: s * tango
     """
     tanimoto_weight = tango_weights["tanimoto"]
     fg_weight = tango_weights["fg"]
     fms_weight = tango_weights["fms"]
 
     tanimoto_similarity = get_max_stock_similarity(
-        query_smiles=query_smiles, 
-        enforced_building_blocks_fps=enforce_blocks_fps
+        query_smiles=query_smiles, enforced_building_blocks_fps=enforce_blocks_fps
     )
-    
+
     # Compute FG overlap depending on reward type
     if "fg" in reward_type or "all" in reward_type:
         fg_overlap = functional_groups_overlap(
-            query_smiles=query_smiles, 
-            enforced_blocks_functional_groups=enforced_blocks_functional_groups
+            query_smiles=query_smiles,
+            enforced_blocks_functional_groups=enforced_blocks_functional_groups,
         )
 
     fms_overlap = fuzzy_matching_substructure(
-        query_smiles=query_smiles, 
-        enforced_blocks_functional_groups=enforced_blocks_functional_groups
+        query_smiles=query_smiles,
+        enforced_blocks_functional_groups=enforced_blocks_functional_groups,
     )
     if reward_type == "tango_fg":
         assert tanimoto_weight + fg_weight == 1, "TANGO-FG weights must sum to 1."
-        return (tanimoto_similarity * tanimoto_weight) + (fg_overlap * fg_weight)
+        base_reward = (tanimoto_similarity * tanimoto_weight) + (fg_overlap * fg_weight)
     elif reward_type == "tango_fms":
         assert tanimoto_weight + fms_weight == 1, "TANGO-FMS weights must sum to 1."
-        return (tanimoto_similarity * tanimoto_weight) + (fms_overlap * fms_weight)
+        base_reward = (tanimoto_similarity * tanimoto_weight) + (
+            fms_overlap * fms_weight
+        )
     elif reward_type == "tango_all":
         print(abs((tanimoto_weight + fg_weight + fms_weight) - 1))
-        assert abs((tanimoto_weight + fg_weight + fms_weight) - 1) <= 1.1e-2, "TANGO-All weights must sum to 1 within a few decimal points."
-        return (tanimoto_similarity * tanimoto_weight) + (fg_overlap * fg_weight) + (fms_overlap * fms_weight)
+        assert (
+            abs((tanimoto_weight + fg_weight + fms_weight) - 1) <= 1.1e-2
+        ), "TANGO-All weights must sum to 1 within a few decimal points."
+        base_reward = (
+            (tanimoto_similarity * tanimoto_weight)
+            + (fg_overlap * fg_weight)
+            + (fms_overlap * fms_weight)
+        )
+    else:
+        raise ValueError(f"Unknown TANGO reward type: {reward_type}")
+
+    # Apply synthesizability factor: reward = s * tango
+    # Note: s is already raised to power before being passed here
+    return synthesizability_factor * base_reward
+
 
 def get_node_reward(
     reward_type: str,
     query_smiles: str,
     enforce_blocks_fps: List[np.ndarray[int]],
     enforced_blocks_functional_groups: Dict[str, List[str]],
-    tango_weights: Dict[str, float]
+    tango_weights: Dict[str, float],
+    synthesizability_factor: float = 1.0,
 ) -> float:
     """
     Calculate the reward for a given node:
@@ -255,21 +314,30 @@ def get_node_reward(
         5. TANGO-FMS: *Max* Tanimoto similarity + *Max* Fuzzy Matching Substructure
         6. TANGO-All: *Max* Tanimoto similarity + *Mean* Functional Groups overlap + *Max* Fuzzy Matching Substructure
 
+    Args:
+        reward_type: Type of reward calculation
+        query_smiles: SMILES string to evaluate
+        enforce_blocks_fps: Fingerprints of enforced building blocks
+        enforced_blocks_functional_groups: Functional groups of enforced blocks
+        tango_weights: Weights for TANGO components
+        synthesizability_factor: Multiplicative synthesizability factor (0-1)
+
+    Returns:
+        Node reward (optionally scaled by synthesizability for TANGO rewards)
     """
     if reward_type in ["tanimoto", "tanimoto_similarity", "tan_sim", "tansim"]:
         reward = get_max_stock_similarity(
-            query_smiles=query_smiles,
-            enforced_building_blocks_fps=enforce_blocks_fps
+            query_smiles=query_smiles, enforced_building_blocks_fps=enforce_blocks_fps
         )
     elif reward_type in ["fg", "functional_groups"]:
         reward = functional_groups_overlap(
             query_smiles=query_smiles,
-            enforced_blocks_functional_groups=enforced_blocks_functional_groups
+            enforced_blocks_functional_groups=enforced_blocks_functional_groups,
         )
     elif reward_type in ["fms", "fuzzy_ms", "fuzzy_matching_substructure"]:
         reward = fuzzy_matching_substructure(
             query_smiles=query_smiles,
-            enforced_blocks_functional_groups=enforced_blocks_functional_groups
+            enforced_blocks_functional_groups=enforced_blocks_functional_groups,
         )
     elif "tango" in reward_type:
         reward = tango_reward(
@@ -277,16 +345,15 @@ def get_node_reward(
             enforce_blocks_fps=enforce_blocks_fps,
             enforced_blocks_functional_groups=enforced_blocks_functional_groups,
             reward_type=reward_type,
-            tango_weights=tango_weights
+            tango_weights=tango_weights,
+            synthesizability_factor=synthesizability_factor,
         )
     else:
         raise ValueError(f"Invalid reward type: {reward_type}")
     return reward
 
-def get_percentage_of_carbon(
-    smiles_bb: str, 
-    smiles_target: str
-) -> float:
+
+def get_percentage_of_carbon(smiles_bb: str, smiles_target: str) -> float:
     """
     Get percentage of carbon atoms in structure based on reference molecule.
     """
@@ -296,30 +363,28 @@ def get_percentage_of_carbon(
 
     # Find MCS. We use CompareAny
     mcs = rdFMCS.FindMCS(
-        mols = [bb, target],
+        mols=[bb, target],
         matchChiralTag=True,
         bondCompare=rdFMCS.BondCompare.CompareAny,
         ringCompare=rdFMCS.RingCompare.StrictRingFusion,
-        completeRingsOnly=True
+        completeRingsOnly=True,
     )
 
     # Get match
     matched_atoms = Chem.MolFromSmarts(mcs.smartsString).GetAtoms()
 
-    # Get number of matched carbons 
+    # Get number of matched carbons
     matched_C = len([atom for atom in matched_atoms if atom.GetSymbol() == "C"])
-    
+
     # Get total number of carbons
     total_C = len([atom for atom in target.GetAtoms() if atom.GetSymbol() == "C"])
     assert total_C > 0, "Total number of carbons must be greater than 0."
-    
-    return matched_C/total_C
+
+    return matched_C / total_C
+
 
 def shape_path_length_reward(
-    length: int,
-    low: float = 1.0,
-    high: float = 8.0,
-    k: float = 0.25
+    length: int, low: float = 1.0, high: float = 8.0, k: float = 0.25
 ) -> float:
     """
     Hard-coded reverse sigmoid reward tranformation for the path length of a synthetic route.

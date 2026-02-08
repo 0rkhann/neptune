@@ -2,6 +2,7 @@
 Based on implementation from https://github.com/MolecularAI/reinvent-scoring/blob/main/reinvent_scoring/scoring/score_components/score_component_factory.py.
 Contains utility function to initialize OracleComponents.
 """
+
 from oracles.oracle_component import OracleComponent
 from oracles.dataclass import OracleComponentParameters
 
@@ -28,7 +29,9 @@ from oracles.physchem.heavy_atoms import HeavyAtoms
 # Structural
 from oracles.structural.matching_substructure import MatchingSubstructure
 from oracles.structural.fuzzy_matching_structure import FuzzyMatchingSubstructure
-from oracles.structural.matching_structure_atom_count import MatchingSubstructureAtomCount
+from oracles.structural.matching_structure_atom_count import (
+    MatchingSubstructureAtomCount,
+)
 from oracles.structural.smarts_alerts import SMARTSAlert
 
 # Synthesizability
@@ -37,6 +40,7 @@ from oracles.synthesizability.rxnmapper_atom_counts import RXNMapperAtomCounts
 from oracles.synthesizability.aizynthfinder import AiZynthFinder
 from oracles.synthesizability.syntheseus import Syntheseus
 from oracles.synthesizability.freedom import Freedom
+from oracles.synthesizability.synthesizability_factor import SynthesizabilityFactor
 
 # Docking
 from oracles.docking.dockstream import DockStream
@@ -63,7 +67,9 @@ from oracles.docking.geam_oracle import GEAMOracle
 from oracles.docking.quickvina2 import QuickVina2
 
 
-def construct_oracle_component(oracle_component_parameters: OracleComponentParameters) -> OracleComponent:
+def construct_oracle_component(
+    oracle_component_parameters: OracleComponentParameters,
+) -> OracleComponent:
     """
     Matches the OracleComponent name and returns the OracleComponent class.
     """
@@ -122,6 +128,8 @@ def construct_oracle_component(oracle_component_parameters: OracleComponentParam
         return Syntheseus(oracle_component_parameters)
     elif name == "freedom":
         return Freedom(oracle_component_parameters)
+    elif name == "synthesizability_factor":
+        return SynthesizabilityFactor(oracle_component_parameters)
     # Docking
     elif name == "dockstream":
         return DockStream(oracle_component_parameters)
@@ -147,7 +155,7 @@ def construct_oracle_component(oracle_component_parameters: OracleComponentParam
     elif name == "ionization_potential":
         return IonizationPotential(oracle_component_parameters)
     elif name == "lumo":
-        return LUMO(oracle_component_parameters) 
+        return LUMO(oracle_component_parameters)
     elif name == "nucleophilicity_index":
         return NucleophilicityIndex(oracle_component_parameters)
     elif name == "nucleophilicity":

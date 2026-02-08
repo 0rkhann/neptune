@@ -11,8 +11,11 @@ def batch_validity(smiles: np.ndarray[str]) -> float:
     """
     Compute the Validity of a batch of SMILES strings.
     """
-    valid_mols = [mol for mol in (Chem.MolFromSmiles(s) for s in smiles) if mol is not None]
+    valid_mols = [
+        mol for mol in (Chem.MolFromSmiles(s) for s in smiles) if mol is not None
+    ]
     return len(valid_mols) / len(smiles)
+
 
 def canonicalize_smiles(smiles: str) -> str:
     """
@@ -20,11 +23,13 @@ def canonicalize_smiles(smiles: str) -> str:
     """
     return Chem.MolToSmiles(Chem.MolFromSmiles(smiles), canonical=True)
 
+
 def canonicalize_smiles_batch(smiles_batch: np.array) -> List[str]:
     """
     Canonicalize a batch of SMILES strings based on RDKit convention.
     """
     return [canonicalize_smiles(smiles) for smiles in smiles_batch]
+
 
 def randomize_smiles(smiles: str) -> str:
     """
@@ -41,6 +46,7 @@ def randomize_smiles(smiles: str) -> str:
     except Exception:
         return smiles
 
+
 def randomize_smiles_batch(smiles_batch: np.ndarray[str], prior) -> np.ndarray[str]:
     """
     Randomize a batch of SMILES strings.
@@ -48,9 +54,12 @@ def randomize_smiles_batch(smiles_batch: np.ndarray[str], prior) -> np.ndarray[s
     """
     if len(smiles_batch) > 0:
         randomized_smiles_batch = np.vectorize(randomize_smiles)(smiles_batch)
-        return np.vectorize(can_be_encoded)(smiles_batch, randomized_smiles_batch, prior)
+        return np.vectorize(can_be_encoded)(
+            smiles_batch, randomized_smiles_batch, prior
+        )
     else:
         return smiles_batch
+
 
 def can_be_encoded(original_smiles: str, randomized_smiles: str, prior) -> str:
     """
@@ -65,6 +74,7 @@ def can_be_encoded(original_smiles: str, randomized_smiles: str, prior) -> str:
     except KeyError:
         return original_smiles
 
+
 def is_encodable(smiles: str, prior) -> bool:
     """
     Returns True if the SMILES string can be encoded by the Vocabulary.
@@ -75,7 +85,8 @@ def is_encodable(smiles: str, prior) -> bool:
         return True
     except KeyError:
         return False
-    
+
+
 def get_bemis_murcko_scaffold(smiles: str) -> str:
     """
     Get the Bemis-Murcko scaffold: https://pubs.acs.org/doi/10.1021/jm9602928 of a SMILES string.
@@ -90,23 +101,32 @@ def get_bemis_murcko_scaffold(smiles: str) -> str:
     else:
         return ""
 
+
 def construct_morgan_fingerprint(smiles: str, radius: int = 2, nBits: int = 1024):
     mol = Chem.MolFromSmiles(smiles)
-    return GetMorganFingerprintAsBitVect(mol, radius=radius, nBits=nBits)
+    return GetMorganFingerprintAsBitVect(
+        mol, radius=radius, nBits=nBits, useChirality=True
+    )
+
 
 def construct_morgan_fingerprints_batch(smiles_batch: np.ndarray[str]):
     fps = [construct_morgan_fingerprint(smiles) for smiles in smiles_batch]
     return fps
 
-def construct_morgan_fingerprints_batch_from_file(file_path: str) -> List[np.ndarray[int]]:
+
+def construct_morgan_fingerprints_batch_from_file(
+    file_path: str,
+) -> List[np.ndarray[int]]:
     with open(file_path, "r") as f:
         smiles_batch = f.readlines()
     return construct_morgan_fingerprints_batch(smiles_batch)
+
 
 def remove_molecules_with_radicals(smiles_batch: np.ndarray[str]) -> np.ndarray[str]:
     """
     Remove molecules with radicals from a batch of SMILES strings.
     """
+
     def has_radicals(smiles: str) -> bool:
         mol = Chem.MolFromSmiles(smiles)
         if mol is not None:

@@ -3,8 +3,10 @@ Parent script that executes Sample Efficient Generative Molecular Design using M
 Takes as input a JSON configuration file that specifies all parameters for the generatve experiment.
 Adapted from https://github.com/MolecularAI/Reinvent/input.py.
 """
+import sys
 import json
 import argparse
+
 from utils.utils import set_seed_everywhere
 
 # Distribution Learning
@@ -26,9 +28,14 @@ from oracles.dataclass import OracleConfiguration
 # Scoring
 from scoring.scorer import Scorer
 from scoring.dataclass import ScoringConfiguration
+print("[SATURN]   - ScoringConfiguration OK", flush=True)
 
 # Reaction-based Enumeration
+print("[SATURN] Importing enumeration...", flush=True)
 from enumeration.enumeration import rxn_based_enumeration
+print("[SATURN]   - rxn_based_enumeration OK", flush=True)
+
+print("[SATURN] All imports completed successfully!", flush=True)
 
 
 parser = argparse.ArgumentParser(description="Run Saturn.")
@@ -48,7 +55,6 @@ def read_json_file(path: str):
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    
     config = read_json_file(args.config)
     running_mode = config["running_mode"].lower()
 
