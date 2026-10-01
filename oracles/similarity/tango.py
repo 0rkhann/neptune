@@ -122,6 +122,28 @@ class Tango(OracleComponent):
         self.enforced_structures_functional_groups = extract_functional_groups(
             self.enforced_structures_smiles
         )
+
+        # --- MAP4C similarity (optional, replaces Morgan+Tanimoto) ---
+        self.use_map4c = parameters.specific_parameters.get("use_map4c_similarity", False)
+        self.enforced_structures_map4c_fps = None
+        if self.use_map4c:
+            from utils.diversity_utils import get_map4c_fingerprint, MAP4C_AVAILABLE
+            if not MAP4C_AVAILABLE:
+                raise ImportError(
+                    "use_map4c_similarity=true requires mapchiral. "
+                    "Install from: ../mapchiral/"
+                )
+            fps = []
+            for smi in self.enforced_structures_smiles:
+                fp = get_map4c_fingerprint(smi)
+                if fp is not None:
+                    fps.append(fp)
+            self.enforced_structures_map4c_fps = fps
+            print(
+                f"[Tango] Using MAP4C+Jaccard similarity "
+                f"({len(fps)}/{len(self.enforced_structures_smiles)} BBs fingerprinted)"
+            )
+
         print("[Tango] Per-fragment TANGO scoring via retrosynthetic decomposition")
 
     def __call__(self, mols: np.ndarray[Mol]) -> np.ndarray[float]:
@@ -167,6 +189,7 @@ class Tango(OracleComponent):
                     enforce_blocks_fps=self.enforced_structures_fps,
                     enforced_blocks_functional_groups=self.enforced_structures_functional_groups,
                     tango_weights=self.tango_weights,
+                    enforce_blocks_map4c_fps=self.enforced_structures_map4c_fps,
                 )
                 node_rewards.append(nr)
 

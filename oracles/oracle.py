@@ -74,14 +74,12 @@ class Oracle:
         )
         # Add oracle components' raw value and reward to the oracle history DataFrame
         for oracle in self.oracle:
-            if oracle.name == "geam":
-                self.oracle_history["raw_vina"] = []
-                self.oracle_history["qed"] = []
-                self.oracle_history["raw_sa"] = []
-                self.oracle_history["aggregated_reward"] = []
-            else:
-                self.oracle_history[f"{oracle.name}_raw_values"] = []
-                self.oracle_history[f"{oracle.name}_reward"] = []
+            self.oracle_history[f"{oracle.name}_raw_values"] = []
+            self.oracle_history[f"{oracle.name}_reward"] = []
+            # Composite oracles (e.g. GEAM) expose sub-component columns
+            if hasattr(oracle, "get_component_breakdown"):
+                for key in oracle.get_component_breakdown():
+                    self.oracle_history[f"{oracle.name}_{key}"] = []
 
         # Track how many times the same SMILES is sampled
         self.repeated_sampled_smiles = {}
@@ -134,21 +132,75 @@ class Oracle:
             6. Updates the Oracle Cache to store the results of previous oracle calls
 
         Returns the original sequences (SMILES or HELM) and the penalized rewards.
-        Sequences are filtered based on RDKit validity and preliminary checks.
-        Likelihoods are calculated in the Reinforcement Learning module using original sequences.
-
-        NOTE: For HELM sequences, they are converted to SMILES internally for oracle
-        evaluation, but the original HELM sequences are preserved and returned for likelihood computation.
         """
-        # 0. Convert HELM to SMILES if needed (for Neptune support)
-        # Store mapping to return HELM sequences at the end
+        # 1. Convert HELM to SMILES if needed, validate, deduplicate
+        smiles, is_helm_input, smiles_to_helm_map = self._convert_helm_sequences(
+            sequences
+        )
+
+        # 2. Check oracle cache for repeat SMILES
+        repeat_smiles, cached_rewards, new_smiles = self.rewards_from_oracle_cache(
+            smiles, is_hallucinated_batch
+        )
+        if is_helm_input:
+            for s in repeat_smiles:
+                if (
+                    s in self.cache
+                    and isinstance(self.cache[s], dict)
+                    and "helm" in self.cache[s]
+                ):
+                    smiles_to_helm_map[s] = self.cache[s]["helm"]
+
+        # 3. Evaluate new molecules through oracle components
+        oracle_components_df = pd.DataFrame()
+        if len(new_smiles) > 0:
+            new_mols = np.vectorize(Chem.MolFromSmiles)(new_smiles)
+            new_smiles, new_mols = self.execute_preliminary_check(
+                new_smiles, new_mols
+            )
+
+            if len(new_smiles) > 0:
+                new_smiles, new_mols, oracle_components_df, rewards = (
+                    self._evaluate_oracle_components(new_mols, new_smiles)
+                )
+                aggregated_rewards = self._aggregate_and_enrich(
+                    new_smiles, oracle_components_df, rewards, is_helm_input
+                )
+            else:
+                aggregated_rewards = np.array([0.0])
+        else:
+            aggregated_rewards = np.array([0.0])
+
+        # 4. Finalize: penalize, update history/cache, return
+        return self._finalize(
+            repeat_smiles,
+            cached_rewards,
+            new_smiles,
+            aggregated_rewards,
+            oracle_components_df,
+            diversity_filter,
+            is_helm_input,
+            smiles_to_helm_map,
+            step,
+        )
+
+    # ── Extracted private methods ────────────────────────────────────────────
+
+    def _convert_helm_sequences(
+        self, sequences: np.ndarray[str]
+    ) -> Tuple[np.ndarray[str], bool, dict]:
+        """
+        Convert HELM sequences to SMILES, validate, and deduplicate.
+
+        Returns:
+            smiles: Validated and deduplicated SMILES array
+            is_helm_input: Whether the input was HELM notation
+            smiles_to_helm_map: Reverse mapping from SMILES to HELM
+        """
         helm_to_smiles_map = {}
         is_helm_input = False
-
-        # After HELM validation/conversion, we work with SMILES internally
         smiles = sequences
 
-        # Check what kind of sequences we received
         if len(sequences) > 0:
             logging.info(
                 f"[Oracle] Received {len(sequences)} sequences. First sequence: {sequences[0][:80]}..."
@@ -158,13 +210,17 @@ class Oracle:
             )
             if HELM_CONVERSION_AVAILABLE:
                 is_helm = is_helm_notation(sequences[0])
-                logging.info(f"[Oracle] is_helm_notation(sequences[0]): {is_helm}")
+                logging.info(
+                    f"[Oracle] is_helm_notation(sequences[0]): {is_helm}"
+                )
 
         if HELM_CONVERSION_AVAILABLE and len(sequences) > 0:
             if is_helm_notation(sequences[0]):
                 is_helm_input = True
                 converted_smiles = []
-                logging.info(f"[Oracle] Processing {len(sequences)} HELM sequences")
+                logging.info(
+                    f"[Oracle] Processing {len(sequences)} HELM sequences"
+                )
                 logging.info(
                     f"[Oracle] valid_monomers loaded: {self.valid_monomers is not None}"
                 )
@@ -178,8 +234,6 @@ class Oracle:
                     )
 
                 # For HELM: Validate using monomer library check
-                # NOTE: For monomer-based HELM, validity == synthesizability
-                # All monomers must be in library for HELM to be valid
                 invalid_count = 0
                 conversion_fail_count = 0
                 conversion_empty_count = 0
@@ -194,11 +248,9 @@ class Oracle:
                         is_valid, valid_count, total_count = check_helm_validness(
                             helm_seq, self.valid_monomers
                         )
-                        # Only process HELM if it's fully valid
                         if not is_valid:
-                            # Invalid HELM (has unknown monomers), skip it
                             invalid_count += 1
-                            if invalid_count <= 5:  # Show first 5 invalid sequences
+                            if invalid_count <= 5:
                                 logging.warning(
                                     f"[Oracle] Invalid HELM (unknown monomers {valid_count}/{total_count}): {helm_seq[:80]}..."
                                 )
@@ -215,30 +267,28 @@ class Oracle:
                                 + conversion_empty_count
                                 + len(converted_smiles)
                                 <= 3
-                            ):  # Show first 3 conversions
+                            ):
                                 logging.info(
                                     f"[Oracle] Converted HELM to SMILES: {helm_seq[:60]}... -> {smi[:60]}..."
                                 )
                         else:
                             conversion_empty_count += 1
-                            if (
-                                conversion_empty_count <= 5
-                            ):  # Show first 5 empty results
+                            if conversion_empty_count <= 5:
                                 logging.warning(
                                     f"[Oracle] HELM->SMILES returned None: {helm_seq[:80]}..."
                                 )
-                        # If conversion fails, skip (don't append)
                     except Exception as e:
-                        # If conversion fails, skip (invalid HELM)
                         conversion_fail_count += 1
-                        if conversion_fail_count <= 3:  # Show first 3 errors
+                        if conversion_fail_count <= 3:
                             logging.warning(
                                 f"[Oracle] HELM->SMILES exception for {helm_seq[:60]}...: {type(e).__name__}: {e}"
                             )
                         continue
 
                 logging.info("[Oracle] HELM Conversion Summary:")
-                logging.info(f"[Oracle]   - Input HELM sequences: {len(sequences)}")
+                logging.info(
+                    f"[Oracle]   - Input HELM sequences: {len(sequences)}"
+                )
                 logging.info(
                     f"[Oracle]   - Successfully converted: {len(converted_smiles)}"
                 )
@@ -253,177 +303,169 @@ class Oracle:
                 )
                 smiles = np.array(converted_smiles)
 
-        # 1. Only keep the valid SMILES (RDKit parsable into Mols)
-        # For HELM inputs, validation already happened via monomer check
-        # For SMILES inputs, validate with RDKit
+        # Validate SMILES with RDKit (HELM already validated via monomer check)
         if not is_helm_input:
-            valid_mask = np.array([Chem.MolFromSmiles(s) is not None for s in smiles])
+            valid_mask = np.array(
+                [Chem.MolFromSmiles(s) is not None for s in smiles]
+            )
             smiles = smiles[valid_mask]
 
-        # 2. De-duplicate SMILES batch
+        # De-duplicate
         smiles = self.de_duplicate_smiles(smiles)
 
-        # Build reverse mapping: SMILES -> HELM (for returning HELM at the end)
+        # Build reverse mapping: SMILES → HELM
         smiles_to_helm_map = (
             {v: k for k, v in helm_to_smiles_map.items()} if is_helm_input else {}
         )
 
-        # 3. Rewards can be obtained directly for SMILES in the Oracle Cache
-        repeat_smiles, cached_rewards, new_smiles = self.rewards_from_oracle_cache(
-            smiles, is_hallucinated_batch
-        )
+        return smiles, is_helm_input, smiles_to_helm_map
 
-        # For HELM inputs, retrieve cached HELM from cache to populate mapping
+    def _evaluate_oracle_components(
+        self, new_mols: np.ndarray[Mol], new_smiles: np.ndarray[str]
+    ) -> Tuple[np.ndarray[str], np.ndarray[Mol], pd.DataFrame, np.ndarray]:
+        """
+        Call each oracle component and filter out molecules with failed calculations.
+
+        Returns:
+            new_smiles: Filtered SMILES (NaN rows removed)
+            new_mols: Filtered Mol objects
+            oracle_components_df: DataFrame with raw values and rewards per component
+            rewards: 2D array (n_oracles × n_molecules) of component rewards
+        """
+        oracle_components_df = pd.DataFrame()
+        rewards = np.empty((len(self.oracle), len(new_mols)))
+        for idx, oracle in enumerate(self.oracle):
+            raw_property_values, component_rewards = oracle.calculate_reward(
+                new_mols, self.calls
+            )
+            oracle_components_df[f"{oracle.name}_raw_values"] = raw_property_values
+            oracle_components_df[f"{oracle.name}_reward"] = component_rewards
+            rewards[idx] = component_rewards
+            # Composite oracles expose sub-component columns
+            if hasattr(oracle, "get_component_breakdown"):
+                for key, values in oracle.get_component_breakdown().items():
+                    oracle_components_df[f"{oracle.name}_{key}"] = values
+
+        # Filter out molecules with NaN values (failed oracle calculations)
+        raw_value_cols = [
+            col
+            for col in oracle_components_df.columns
+            if col.endswith("_raw_values")
+        ]
+        if raw_value_cols:
+            valid_mask = (
+                ~oracle_components_df[raw_value_cols].isna().any(axis=1).values
+            )
+            if not np.all(valid_mask):
+                num_filtered = np.sum(~valid_mask)
+                logging.warning(
+                    f"[Oracle] Filtering out {num_filtered} molecules with failed oracle calculations (NaN values)"
+                )
+                new_smiles = new_smiles[valid_mask]
+                new_mols = new_mols[valid_mask]
+                oracle_components_df = oracle_components_df[
+                    valid_mask
+                ].reset_index(drop=True)
+                rewards = rewards[:, valid_mask]
+
+        return new_smiles, new_mols, oracle_components_df, rewards
+
+    def _aggregate_and_enrich(
+        self,
+        new_smiles: np.ndarray[str],
+        oracle_components_df: pd.DataFrame,
+        rewards: np.ndarray,
+        is_helm_input: bool,
+    ) -> np.ndarray[float]:
+        """
+        Aggregate component rewards and enrich oracle_components_df with metadata.
+
+        Returns:
+            aggregated_rewards: Single reward per molecule
+        """
+        if len(new_smiles) == 0:
+            return np.array([])
+
+        aggregated_rewards = self.aggregator(rewards, self.oracle_weights)
+
+        # Extract and load metadata from oracles (ETL pattern)
+        metadata = extract_oracle_metadata(self.oracle)
+        expected_len = len(new_smiles)
+
+        if (
+            metadata["bb_sequences"]
+            and len(metadata["bb_sequences"]) == expected_len
+        ):
+            oracle_components_df["bb_sequences"] = metadata["bb_sequences"]
+
+        if (
+            metadata["synth_factors"]
+            and len(metadata["synth_factors"]) == expected_len
+            and "synthesizability_factor_raw_values"
+            not in oracle_components_df.columns
+        ):
+            oracle_components_df["synthesizability_factor_raw_values"] = (
+                metadata["synth_factors"]
+            )
+
+        # For HELM inputs: valid HELM sequences are synthesizable by construction
         if is_helm_input:
-            for s in repeat_smiles:
-                if (
-                    s in self.cache
-                    and isinstance(self.cache[s], dict)
-                    and "helm" in self.cache[s]
-                ):
-                    smiles_to_helm_map[s] = self.cache[s]["helm"]
+            oracle_components_df["synthesizability_factor_raw_values"] = 1.0
 
-        # In case all SMILES are repeats
-        if len(new_smiles) > 0:
-            # 4. Get the Mols for the new SMILES
-            new_mols = np.vectorize(Chem.MolFromSmiles)(new_smiles)
+        return aggregated_rewards
 
-            # 5. Execute preliminary check (if applicable) which removes Mols that do not satisfy the (relatively) cheaper oracle components
-            #    e.g., molecular weight is too high (> 500 Da), so discard without wasting computational resources on a docking oracle
-            new_smiles, new_mols = self.execute_preliminary_check(new_smiles, new_mols)
+    def _finalize(
+        self,
+        repeat_smiles: np.ndarray[str],
+        cached_rewards: np.ndarray[float],
+        new_smiles: np.ndarray[str],
+        aggregated_rewards: np.ndarray[float],
+        oracle_components_df: pd.DataFrame,
+        diversity_filter: DiversityFilter,
+        is_helm_input: bool,
+        smiles_to_helm_map: dict,
+        step: Optional[int],
+    ) -> Tuple[np.ndarray[str], np.ndarray[float]]:
+        """
+        Finalize oracle evaluation: penalize, update history/cache, and return.
 
-            # In case no SMILES pass the preliminary check
-            if len(new_smiles) > 0:
-                # 6. Call each oracle component and aggregate the rewards
-                #    Initialize a DataFrame to store the raw values and rewards of each oracle component for tracking purposes
-                oracle_components_df = pd.DataFrame()
-                rewards = np.empty((len(self.oracle), len(new_mols)))
-                for idx, oracle in enumerate(self.oracle):
-                    if oracle.name == "geam":
-                        raw_vina, qed_rewards, raw_sa, aggregated_rewards = oracle(
-                            new_mols
-                        )
-                        oracle_components_df["raw_vina"] = raw_vina
-                        oracle_components_df["qed"] = qed_rewards
-                        oracle_components_df["raw_sa"] = raw_sa
-                        oracle_components_df["aggregated_reward"] = aggregated_rewards
-                    else:
-                        raw_property_values, component_rewards = (
-                            oracle.calculate_reward(new_mols, self.calls)
-                        )
-                        oracle_components_df[f"{oracle.name}_raw_values"] = (
-                            raw_property_values
-                        )
-                        oracle_components_df[f"{oracle.name}_reward"] = (
-                            component_rewards
-                        )
-                        rewards[idx] = component_rewards
-
-                # 6.5. Filter out molecules with NaN values (failed oracle calculations)
-                # This is analogous to filtering out invalid SMILES at step 1
-                raw_value_cols = [
-                    col
-                    for col in oracle_components_df.columns
-                    if col.endswith("_raw_values")
-                ]
-                if raw_value_cols:
-                    valid_mask = (
-                        ~oracle_components_df[raw_value_cols].isna().any(axis=1).values
-                    )
-                    if not np.all(valid_mask):
-                        num_filtered = np.sum(~valid_mask)
-                        logging.warning(
-                            f"[Oracle] Filtering out {num_filtered} molecules with failed oracle calculations (NaN values)"
-                        )
-                        new_smiles = new_smiles[valid_mask]
-                        new_mols = new_mols[valid_mask]
-                        oracle_components_df = oracle_components_df[
-                            valid_mask
-                        ].reset_index(drop=True)
-                        rewards = rewards[:, valid_mask]
-
-                # 7. Aggregate the rewards
-                if len(new_smiles) > 0:
-                    if oracle.name == "geam":
-                        rewards = np.array([aggregated_rewards])
-                    else:
-                        aggregated_rewards = self.aggregator(
-                            rewards, self.oracle_weights
-                        )
-                else:
-                    aggregated_rewards = np.array([])
-
-                # 7.5. Extract and load metadata from oracles
-                # Using Extract-Transform-Load pattern via utility functions
-                metadata = extract_oracle_metadata(self.oracle)
-                expected_len = len(new_smiles)
-
-                # Load building block sequences
-                if (
-                    metadata["bb_sequences"]
-                    and len(metadata["bb_sequences"]) == expected_len
-                ):
-                    oracle_components_df["bb_sequences"] = metadata["bb_sequences"]
-
-                # Load synthesizability factors (only if not already present)
-                if (
-                    metadata["synth_factors"]
-                    and len(metadata["synth_factors"]) == expected_len
-                    and "synthesizability_factor_raw_values"
-                    not in oracle_components_df.columns
-                ):
-                    oracle_components_df["synthesizability_factor_raw_values"] = (
-                        metadata["synth_factors"]
-                    )
-            else:
-                aggregated_rewards = np.array([0.0])
-
-        # FIXME: probably another way to do this
-        else:
-            aggregated_rewards = np.array([0.0])
-
-        # 8. At this point, rewards have been obtained for the new SMILES
-        #    Increment the number of oracle calls
+        Returns:
+            return_sequences: Original sequences (HELM if input was HELM)
+            penalized_all_rewards: Diversity-penalized rewards
+        """
+        # Increment oracle calls
         self.calls += len(new_smiles)
 
-        # 9. Concatenate the repeated and new SMILES and their corresponding rewards
-        #    The Diversity Filter operations are performed on the concatenated set
+        # Concatenate repeated and new SMILES
         all_smiles = np.concatenate([repeat_smiles, new_smiles])
         all_rewards = np.concatenate([cached_rewards, aggregated_rewards])
 
-        # 10. Penalize the rewards based on the Diversity Filter
-        # For HELM inputs, pass original HELM sequences (bigram diversity filter expects HELM)
+        # Penalize rewards and update the Diversity Filter in a single pass
+        n_repeat = len(repeat_smiles)
         if is_helm_input:
-            new_helm = np.array([smiles_to_helm_map.get(s, s) for s in new_smiles])
-            all_helm = np.array([smiles_to_helm_map.get(s, s) for s in all_smiles])
-            penalized_new_rewards = diversity_filter.penalize_reward(
-                new_helm, aggregated_rewards
+            all_helm = np.array(
+                [smiles_to_helm_map.get(s, s) for s in all_smiles]
             )
-            penalized_all_rewards = diversity_filter.penalize_reward(
+            penalized_all_rewards = diversity_filter.penalize_and_update(
                 all_helm, all_rewards
             )
         else:
-            penalized_new_rewards = diversity_filter.penalize_reward(
-                new_smiles, aggregated_rewards
-            )
-            penalized_all_rewards = diversity_filter.penalize_reward(
+            penalized_all_rewards = diversity_filter.penalize_and_update(
                 all_smiles, all_rewards
             )
+        penalized_new_rewards = penalized_all_rewards[n_repeat:]
 
-        # 11. Update the Oracle History
+        # Update Oracle History
         if len(new_smiles) > 0:
-            # Only update with the new SMILES
             if not self.allow_oracle_repeats:
                 oracle_history_smiles = new_smiles
                 oracle_history_rewards = aggregated_rewards
                 oracle_history_penalized_rewards = penalized_new_rewards
-            # Update with all SMILES
             elif self.allow_oracle_repeats:
                 oracle_history_smiles = all_smiles
                 oracle_history_rewards = all_rewards
                 oracle_history_penalized_rewards = penalized_all_rewards
 
-            # Get original sequences for oracle history (HELM if input was HELM, else SMILES)
             if is_helm_input:
                 original_sequences = np.array(
                     [smiles_to_helm_map.get(s, s) for s in oracle_history_smiles]
@@ -443,23 +485,18 @@ class Oracle:
                 step=step,
             )
 
-        # 12. Update the Diversity Filter
-        # For HELM inputs, pass original HELM sequences to diversity filter
+        # Update Oracle Cache
         if is_helm_input:
-            # Map SMILES back to HELM for diversity filtering
-            all_helm = np.array([smiles_to_helm_map.get(s, s) for s in all_smiles])
-            diversity_filter.update(all_helm)
-        else:
-            diversity_filter.update(all_smiles)
-
-        # 13. Update the Oracle Cache - store both SMILES and HELM
-        if is_helm_input:
-            all_helm = np.array([smiles_to_helm_map.get(s, s) for s in all_smiles])
-            self.update_oracle_cache(all_smiles, penalized_all_rewards, helm=all_helm)
+            all_helm = np.array(
+                [smiles_to_helm_map.get(s, s) for s in all_smiles]
+            )
+            self.update_oracle_cache(
+                all_smiles, penalized_all_rewards, helm=all_helm
+            )
         else:
             self.update_oracle_cache(all_smiles, penalized_all_rewards)
 
-        # 14. Return original sequences (HELM if input was HELM, otherwise SMILES)
+        # Return original sequences (HELM if input was HELM)
         if is_helm_input:
             return_sequences = np.array(
                 [smiles_to_helm_map.get(s, s) for s in all_smiles]
@@ -468,20 +505,31 @@ class Oracle:
         else:
             return all_smiles, penalized_all_rewards
 
+    # ── Oracle construction and caching ──────────────────────────────────────
+
     def construct_oracle(
         self, oracle_components: List[OracleComponentParameters]
     ) -> List[OracleComponent]:
         """
-        Construct the oracle function which can be composed of multiple inidividual oracle components.
+        Construct the oracle function which can be composed of multiple individual oracle components.
+
+        Components that need a SynthesizabilityChecker (PeptideLength, SynthesizabilityFactor)
+        share a single instance: the first component creates it, subsequent ones receive it via DI.
+        The shared instance is also exposed as self.synth_checker for the DiversityFilter.
         """
         oracle = []
+        shared_synth_checker = None
         for component in oracle_components:
-            # Construct the OracleComponent
             oracle_component = construct_oracle_component(
-                OracleComponentParameters(**component)
+                OracleComponentParameters(**component),
+                synth_checker=shared_synth_checker,
             )
             oracle.append(oracle_component)
+            # Capture the checker from the first component that creates one
+            if shared_synth_checker is None and getattr(oracle_component, 'synth_checker', None) is not None:
+                shared_synth_checker = oracle_component.synth_checker
 
+        self.synth_checker = shared_synth_checker
         return oracle
 
     def rewards_from_oracle_cache(

@@ -39,19 +39,14 @@ class OracleComponent(ABC):
 
     def calculate_reward(self, mols: np.ndarray[Mol], oracle_calls: int) -> Tuple[np.ndarray[float], np.ndarray[float]]:
         """
-        All OracleComponents execute __call__ and then apply the reward shaping function to get normalized rewards [0, 1]. 
+        All OracleComponents execute __call__ and then apply the reward shaping function to get normalized rewards [0, 1].
         Errors are assigned a reward of 0.0.
 
         Oracle calls is only used for the physics-based oracles which use it as a prefix for the output files.
         """
-        # FIXME: Hard-coded GEAM oracle to make it run out-of-the-box without changes to Saturn's logic flow
-        if self.name == "geam":
-            raw_vina, qed_rewards, raw_sa, aggregated_rewards = self(mols)
-            return raw_vina, qed_rewards, raw_sa, aggregated_rewards
-        else:
-            # Calculate the raw property values
-            raw_property_values = self(mols, oracle_calls) if self.name in FLAGGED_ORACLES else self(mols) 
-            # Apply reward shaping
-            # FIXME: in case raw_property_values of 0.0 are good, then there will be a problem when reward shaping
-            rewards = self.reward_shaping_function(raw_property_values)
-            return raw_property_values, rewards
+        # Calculate the raw property values
+        raw_property_values = self(mols, oracle_calls) if self.name in FLAGGED_ORACLES else self(mols)
+        # Apply reward shaping
+        # FIXME: in case raw_property_values of 0.0 are good, then there will be a problem when reward shaping
+        rewards = self.reward_shaping_function(raw_property_values)
+        return raw_property_values, rewards

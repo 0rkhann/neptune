@@ -13,24 +13,26 @@ from utils.chemistry_utils import randomize_smiles
 
 class SMILESDataset(Dataset):
     """
-    Dataset class for SMILES strings.
-    In principle, any string-based representation of molecules can be 
+    Dataset class for SMILES strings or HELM sequences.
+    In principle, any string-based representation of molecules can be
     used, as long as the Tokenizer and Vocabulary are adapted accordingly.
     """
     def __init__(
-        self, 
+        self,
         agent: str,
-        dataset_path: str, 
+        dataset_path: str,
         batch_size: int = 256,
         transfer_learning: bool = False,
         randomize: bool = True,
-        max_sequence_length: int = 128
+        max_sequence_length: int = 128,
+        tokenizer_type: str = "smiles",
     ):
         self.dataset_path = dataset_path
         self.max_sequence_length = max_sequence_length
         self.batch_size = batch_size
         self.randomize = randomize
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.tokenizer_type = tokenizer_type
 
         self.agent = agent
         self.transfer_learning = transfer_learning
@@ -76,7 +78,11 @@ class SMILESDataset(Dataset):
             self.dataset = self.read_data_file()
             self.vocabulary = self.agent.vocabulary
         else:
-            self.tokenizer = SMILESTokenizer()
+            if self.tokenizer_type == "helm":
+                from utils.helm.helm_tokenizer import HELMTokenizer
+                self.tokenizer = HELMTokenizer()
+            else:
+                self.tokenizer = SMILESTokenizer()
             self.dataset = self.read_data_file()
             self.vocabulary = create_vocabulary(
                 smiles=self.dataset,

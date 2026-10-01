@@ -74,10 +74,11 @@ class Generator:
         :return: SMILES generator model instance
         """
         if torch.cuda.is_available():
-            save_dict = torch.load(model_path)
+            save_dict = torch.load(model_path, weights_only=False)
         else:
             save_dict = torch.load(
-                model_path, map_location=lambda storage, loc: storage
+                model_path, map_location=lambda storage, loc: storage,
+                weights_only=False,
             )
 
         network_params = save_dict.get("network_params", {})
@@ -204,18 +205,20 @@ class Generator:
             2. Decoder
             3. Mamba
         """
-        # Detect start token: SMILES uses "^", HELM submonomer uses "@"
+        # Detect start token: SMILES uses "^", HELM char-level uses "@", functional submonomer uses "<BOS>"
         if "^" in self.vocabulary:
             start_token_str = "^"
         elif "@" in self.vocabulary:
             start_token_str = "@"
+        elif "<BOS>" in self.vocabulary:
+            start_token_str = "<BOS>"
         else:
             # Fallback: try to get from tokenizer if it has get_begin_token method
             if hasattr(self.tokenizer, "get_begin_token"):
                 start_token_str = self.tokenizer.get_begin_token()
             else:
                 raise ValueError(
-                    f"Could not determine start token. Vocabulary does not contain '^' or '@'. "
+                    f"Could not determine start token. Vocabulary does not contain '^', '@', or '<BOS>'. "
                     f"Available tokens: {list(self.vocabulary.get_tokens())[:10]}..."
                 )
 
@@ -236,6 +239,14 @@ class Generator:
         nlls = torch.zeros(
             batch_size, device=self.device
         )  # Track Negative Log-Likelihoods
+
+        # Determine end token index for stopping condition
+        if "<EOS>" in self.vocabulary:
+            _end_idx = self.vocabulary["<EOS>"]
+        elif "$" in self.vocabulary:
+            _end_idx = self.vocabulary["$"]
+        else:
+            _end_idx = 0  # fallback: index 0
 
         # Autoregressive generation
         for idx in range(1, self.max_sequence_length + 1, 1):
@@ -269,8 +280,8 @@ class Generator:
             sequences.append(input_vector.view(-1, 1))
             nlls += self.nll_loss(log_probs, input_vector)
 
-            # Stop sampling if all sequences have generated the stop token
-            if input_vector.sum() == 0:
+            # Stop sampling if all sequences have generated the end token
+            if (input_vector == _end_idx).all():
                 break
 
         sequences = torch.cat(sequences, 1)

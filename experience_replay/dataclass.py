@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 
 @dataclass
@@ -9,6 +9,4 @@ class ExperienceReplayParameters:
     sequences: List[str] = field(
         default_factory=list
     )  # Can be SMILES (Saturn) or HELM (Neptune)
-    use_bigram_scaffold: bool = (
-        False  # Use bigram scaffolds for selective memory purge (Neptune/HELM only)
-    )
+    scaffold_type: Optional[str] = None  # "subclass", "monomer", "sidechain", or None (Bemis-Murcko for SMILES)

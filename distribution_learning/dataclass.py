@@ -11,3 +11,4 @@ class DistributionLearningConfiguration:
     training_dataset_path: str
     train_with_randomization: bool = True,
     transfer_learning: bool = False
+    tokenizer_type: str = "smiles"

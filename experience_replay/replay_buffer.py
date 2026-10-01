@@ -3,7 +3,8 @@ Some code is based on the implementation from https://github.com/MolecularAI/Rei
 
 Supports:
 - Saturn (SMILES): Bemis-Murcko scaffolds
-- Neptune (HELM): Bigram scaffolds (when use_bigram_scaffold=True)
+- Neptune (HELM): Order-independent fingerprints (scaffold_type="subclass"/"monomer")
+- Atom-level (SMILES): ECFP4 sidechain fingerprints (scaffold_type="sidechain")
 """
 
 from typing import Tuple, List
@@ -11,27 +12,26 @@ import logging
 import numpy as np
 import pandas as pd
 from copy import deepcopy
-from rdkit import Chem
+from rdkit import Chem, DataStructs
 from utils.chemistry_utils import (
     randomize_smiles_batch,
-    get_bemis_murcko_scaffold,
 )
 
 from experience_replay.dataclass import ExperienceReplayParameters
+from utils.diversity_utils import (
+    to_smiles,
+    get_diversity_fingerprint,
+    HELM_AVAILABLE,
+    SIDECHAIN_FP_AVAILABLE,
+    get_sidechain_fingerprint,
+    get_subclass_fingerprint,
+    get_monomer_fingerprint,
+    subclass_fingerprint_from_monomers,
+    monomer_fingerprint_from_monomers,
+)
 
 # Oracle is called if seeding molecules into the Replay Buffer at the start of the generative experiment
 from oracles.oracle import Oracle
-
-# Import bigram scaffold utilities (for Neptune/HELM only)
-try:
-    from utils.bigram_diversity_utils import get_bigram_scaffold
-    from utils.helm import is_helm_notation
-
-    BIGRAM_AVAILABLE = True
-except ImportError:
-    BIGRAM_AVAILABLE = False
-    get_bigram_scaffold = None
-    is_helm_notation = None
 
 
 class ReplayBuffer:
@@ -40,7 +40,8 @@ class ReplayBuffer:
 
     Supports:
     - Saturn (SMILES): Stores SMILES, uses Bemis-Murcko scaffolds for purging
-    - Neptune (HELM): Stores HELM sequences, uses bigram scaffolds for purging
+    - Neptune (HELM): Stores HELM sequences, uses order-independent fingerprints for purging
+    - Atom-level (SMILES): ECFP4 sidechain fingerprints for Tanimoto-based purging
     """
 
     def __init__(self, parameters: ExperienceReplayParameters):
@@ -50,21 +51,54 @@ class ReplayBuffer:
         # Stores the top N highest reward sequences generated so far
         self.memory = pd.DataFrame(columns=["smiles", "reward"])
 
-        # Bigram scaffold support (Neptune/HELM only)
-        self.use_bigram_scaffold = parameters.use_bigram_scaffold
-        if self.use_bigram_scaffold:
-            if not BIGRAM_AVAILABLE:
+        # Scaffold type: "subclass", "monomer", "sidechain", or None
+        self.scaffold_type = parameters.scaffold_type
+
+        # SynthesizabilityChecker and threshold for sidechain mode (injected by RL agent via set_synth_checker)
+        self._synth_checker = None
+        self._tanimoto_threshold = 0.65  # Default; overridden by set_synth_checker
+
+        if self.scaffold_type == "sidechain":
+            if not SIDECHAIN_FP_AVAILABLE:
                 raise ImportError(
-                    "Bigram scaffold support requires bigram_diversity_utils. "
+                    "scaffold_type='sidechain' requires GenAI4Peptidomimetic_native. "
+                    "Install with: pip install -e <GenAI4Peptidomimetic_native_dir>"
+                )
+            self._fingerprint_fn = None  # Not used; sidechain mode uses Tanimoto comparison
+            self._monomer_fingerprint_fn = None
+            logging.info(
+                "[ReplayBuffer] Using XOR-ECFP sidechain fingerprints for selective memory purge"
+            )
+        elif self.scaffold_type in ("subclass", "monomer"):
+            if not HELM_AVAILABLE:
+                raise ImportError(
+                    "HELM fingerprint support requires subclass_fingerprint. "
                     "Please ensure these modules are available."
                 )
+            if self.scaffold_type == "subclass":
+                self._fingerprint_fn = get_subclass_fingerprint
+                self._monomer_fingerprint_fn = subclass_fingerprint_from_monomers
+            else:
+                self._fingerprint_fn = get_monomer_fingerprint
+                self._monomer_fingerprint_fn = monomer_fingerprint_from_monomers
             logging.info(
-                "[ReplayBuffer] Using bigram scaffolds for HELM sequences (Neptune)"
+                f"[ReplayBuffer] Using {self.scaffold_type} fingerprints"
             )
         else:
+            self._fingerprint_fn = None
+            self._monomer_fingerprint_fn = None
             logging.info(
                 "[ReplayBuffer] Using Bemis-Murcko scaffolds for SMILES (Saturn)"
             )
+
+    def set_synth_checker(self, synth_checker, tanimoto_threshold: float = 0.65) -> None:
+        """Inject SynthesizabilityChecker (shared with DiversityFilter)."""
+        self._synth_checker = synth_checker
+        self._tanimoto_threshold = tanimoto_threshold
+        logging.info(
+            f"[ReplayBuffer] SynthesizabilityChecker injected "
+            f"(tanimoto_threshold={tanimoto_threshold})"
+        )
 
     def add(self, smiles: np.ndarray[str], rewards: np.ndarray[float]) -> None:
         df = pd.DataFrame({"smiles": smiles, "reward": rewards})
@@ -106,37 +140,6 @@ class ReplayBuffer:
         self.memory = sorted_df.head(self.memory_size)
         self.memory = self.memory.loc[self.memory["reward"] != 0.0]
 
-    def _get_scaffold(self, sequence: str) -> str:
-        """
-        Get scaffold for a sequence.
-
-        - Neptune (HELM with use_bigram_scaffold=True): bigram scaffolds
-        - Saturn (SMILES): Bemis-Murcko scaffolds
-
-        NOTE: Bigram scaffolds are ONLY supported for HELM (Neptune).
-        """
-        if self.use_bigram_scaffold:
-            # Bigram scaffolds are ONLY for HELM (Neptune)
-            if not is_helm_notation(sequence):
-                raise ValueError(
-                    f"use_bigram_scaffold=True requires HELM sequences (Neptune), "
-                    f"but received SMILES: {sequence[:60]}... "
-                    f"Use use_bigram_scaffold=False for Saturn (SMILES)."
-                )
-
-            scaffold = get_bigram_scaffold(sequence)
-            if not scaffold:
-                logging.error(
-                    f"[ReplayBuffer] Failed to extract bigram scaffold from HELM: {sequence[:60]}..."
-                )
-                raise ValueError(
-                    f"Failed to extract bigram scaffold from HELM: {sequence[:60]}..."
-                )
-            return scaffold
-        else:
-            # Bemis-Murcko scaffolds for SMILES (Saturn)
-            return get_bemis_murcko_scaffold(sequence)
-
     def selective_memory_purge(
         self, sequences: np.ndarray[str], rewards: np.ndarray[float]
     ) -> None:
@@ -145,8 +148,9 @@ class ReplayBuffer:
         Purges the memory of sequences that have penalized rewards (0.0) *before* executing Augmented Memory updates.
         Intuitively, this operation prevents penalized sequences from directing the Agent's chemical space navigation.
 
-        - Neptune (HELM): uses bigram scaffolds (matching bigram diversity filter)
+        - Neptune (HELM): uses order-independent fingerprints (matching diversity filter)
         - Saturn (SMILES): uses Bemis-Murcko scaffolds
+        - Sidechain mode: uses Tanimoto similarity between XOR-ECFP fingerprints
 
         # NOTE: Consider a MPO objective task using a product aggregator. If one of the OracleComponent's reward is 0,
         #       then the aggregated reward may be 0. But other OracleComponents may have a non-zero reward. We do not
@@ -154,13 +158,26 @@ class ReplayBuffer:
         #       added to the memory in the first place. Selective Memory Purge *only* removes scaffolds that are
         #       penalized by the Diversity Filter.
         """
+        if self.scaffold_type == "sidechain":
+            self._sidechain_memory_purge(sequences, rewards)
+            return
+
         zero_reward_indices = np.where(rewards == 0.0)[0]
         if len(zero_reward_indices) > 0:
             sequences_to_purge = sequences[zero_reward_indices]
-            scaffolds_to_purge = [self._get_scaffold(s) for s in sequences_to_purge]
+            scaffolds_to_purge = [
+                get_diversity_fingerprint(
+                    s, self._fingerprint_fn, self._monomer_fingerprint_fn,
+                    self._synth_checker, "[ReplayBuffer]"
+                )
+                for s in sequences_to_purge
+            ]
             purged_memory = deepcopy(self.memory)
             purged_memory["scaffolds"] = purged_memory["smiles"].apply(
-                self._get_scaffold
+                lambda s: get_diversity_fingerprint(
+                    s, self._fingerprint_fn, self._monomer_fingerprint_fn,
+                    self._synth_checker, "[ReplayBuffer]"
+                )
             )
             purged_memory = purged_memory.loc[
                 ~purged_memory["scaffolds"].isin(scaffolds_to_purge)
@@ -170,6 +187,47 @@ class ReplayBuffer:
         else:
             # If no scaffolds are penalized, do nothing
             return
+
+    def _sidechain_memory_purge(
+        self, sequences: np.ndarray[str], rewards: np.ndarray[float]
+    ) -> None:
+        """
+        Tanimoto-based selective memory purge for SidechainFingerprint mode.
+
+        Computes ECFP4 fingerprints for penalized sequences (reward=0.0),
+        then removes buffer entries whose FP has Tanimoto > threshold with any
+        penalized FP.
+        """
+        zero_idx = np.where(rewards == 0.0)[0]
+        if len(zero_idx) == 0:
+            return
+
+        # Compute sidechain FPs for penalized sequences
+        penalized_fps = []
+        for i in zero_idx:
+            smiles = to_smiles(sequences[i])
+            fp = get_sidechain_fingerprint(smiles, self._synth_checker) if smiles else None
+            if fp is not None:
+                penalized_fps.append(fp)
+
+        if not penalized_fps:
+            return
+
+        # Filter memory: remove entries similar to any penalized FP
+        keep_mask = []
+        for _, row in self.memory.iterrows():
+            smiles = to_smiles(row["smiles"])
+            mem_fp = get_sidechain_fingerprint(smiles, self._synth_checker) if smiles else None
+            if mem_fp is None:
+                keep_mask.append(True)  # Keep if FP can't be computed
+                continue
+            similar = any(
+                DataStructs.TanimotoSimilarity(mem_fp, pfp) > self._tanimoto_threshold
+                for pfp in penalized_fps
+            )
+            keep_mask.append(not similar)
+
+        self.memory = self.memory.loc[keep_mask]
 
     def prepopulate_buffer(self, oracle: Oracle) -> Oracle:
         """

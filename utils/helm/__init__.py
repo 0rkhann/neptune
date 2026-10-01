@@ -12,7 +12,6 @@ Requirements:
 
 # Import local tokenizers
 from .monomer_tokenizer import HELMTokenizer
-from .submonomer_tokenizer import SubMonomerTokenizer, HelmDictionary
 
 
 # Import HELM utilities from GenAI4Peptidomimetic_native package
@@ -59,8 +58,6 @@ except ImportError as e:
 __all__ = [
     # Tokenizers (local)
     "HELMTokenizer",
-    "SubMonomerTokenizer",
-    "HelmDictionary",
     # HELM utilities (from GenAI4Peptidomimetic_native)
     "create_helm_string",
     "decode_helm_string",

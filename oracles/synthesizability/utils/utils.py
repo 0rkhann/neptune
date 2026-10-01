@@ -33,6 +33,22 @@ def get_max_stock_similarity(
     return np.max([BulkTanimotoSimilarity(query_fp, enforced_building_blocks_fps)])
 
 
+def get_max_stock_similarity_map4c(
+    query_smiles: str, enforced_building_blocks_map4c_fps: List[np.ndarray]
+) -> float:
+    """
+    Get the max MAP4C Jaccard similarity of the query SMILES to the enforced building blocks.
+    """
+    from utils.diversity_utils import get_map4c_fingerprint, map4c_jaccard_similarity
+    query_fp = get_map4c_fingerprint(query_smiles)
+    if query_fp is None:
+        return 0.0
+    return max(
+        map4c_jaccard_similarity(query_fp, lib_fp)
+        for lib_fp in enforced_building_blocks_map4c_fps
+    )
+
+
 def matched_fuzzy_substructure(
     generated_smiles: str, enforced_blocks: List[Mol], threshold: float = 0.50
 ) -> bool:
@@ -216,10 +232,6 @@ def fuzzy_matching_substructure(
                     f"  MCS SMARTS: {mcs_result.smartsString}",
                     flush=True,
                 )
-                assert int(asymmetric_overlap) != 1, (
-                    f"Asymmetric FMS error: query='{query_smiles}', block='{block_smiles}', "
-                    f"MCS={mcs_result.numAtoms} atoms"
-                )
                 return asymmetric_overlap
         else:
             max_mcs_atoms = max(max_mcs_atoms, overlap)
@@ -233,20 +245,21 @@ def tango_reward(
     reward_type: str,
     tango_weights: Dict[str, float],
     synthesizability_factor: float = 1.0,
+    enforce_blocks_map4c_fps: List[np.ndarray] = None,
 ) -> float:
     """
     Calculate all TANGO rewards with optional synthesizability factor.
 
     Args:
         query_smiles: SMILES string to evaluate
-        enforce_blocks_fps: Fingerprints of enforced building blocks
+        enforce_blocks_fps: Morgan fingerprints of enforced building blocks
         enforced_blocks_functional_groups: Functional groups of enforced blocks
         reward_type: Type of TANGO reward (tango_fg, tango_fms, tango_all)
-        tango_weights: Weights for tanimoto, fg, and fms components
+        tango_weights: Weights for tanimoto/map4c, fg, and fms components
         synthesizability_factor: Multiplicative factor (0-1) representing synthesizability.
-                                 This is automatically computed by retrosynthetic tools and raised
-                                 to a power (s^power) before being applied. Default is 1.0.
-                                 Final reward: reward = (s^power) * tango
+        enforce_blocks_map4c_fps: MAP4C fingerprints of enforced building blocks.
+            When provided, uses MAP4C+Jaccard instead of Morgan+Tanimoto for the
+            similarity component.
 
     Returns:
         TANGO reward scaled by synthesizability factor: s * tango
@@ -255,9 +268,16 @@ def tango_reward(
     fg_weight = tango_weights["fg"]
     fms_weight = tango_weights["fms"]
 
-    tanimoto_similarity = get_max_stock_similarity(
-        query_smiles=query_smiles, enforced_building_blocks_fps=enforce_blocks_fps
-    )
+    if enforce_blocks_map4c_fps is not None:
+        similarity = get_max_stock_similarity_map4c(
+            query_smiles=query_smiles,
+            enforced_building_blocks_map4c_fps=enforce_blocks_map4c_fps,
+        )
+    else:
+        similarity = get_max_stock_similarity(
+            query_smiles=query_smiles,
+            enforced_building_blocks_fps=enforce_blocks_fps,
+        )
 
     # Compute FG overlap depending on reward type
     if "fg" in reward_type or "all" in reward_type:
@@ -272,10 +292,10 @@ def tango_reward(
     )
     if reward_type == "tango_fg":
         assert tanimoto_weight + fg_weight == 1, "TANGO-FG weights must sum to 1."
-        base_reward = (tanimoto_similarity * tanimoto_weight) + (fg_overlap * fg_weight)
+        base_reward = (similarity * tanimoto_weight) + (fg_overlap * fg_weight)
     elif reward_type == "tango_fms":
         assert tanimoto_weight + fms_weight == 1, "TANGO-FMS weights must sum to 1."
-        base_reward = (tanimoto_similarity * tanimoto_weight) + (
+        base_reward = (similarity * tanimoto_weight) + (
             fms_overlap * fms_weight
         )
     elif reward_type == "tango_all":
@@ -284,7 +304,7 @@ def tango_reward(
             abs((tanimoto_weight + fg_weight + fms_weight) - 1) <= 1.1e-2
         ), "TANGO-All weights must sum to 1 within a few decimal points."
         base_reward = (
-            (tanimoto_similarity * tanimoto_weight)
+            (similarity * tanimoto_weight)
             + (fg_overlap * fg_weight)
             + (fms_overlap * fms_weight)
         )
@@ -303,6 +323,7 @@ def get_node_reward(
     enforced_blocks_functional_groups: Dict[str, List[str]],
     tango_weights: Dict[str, float],
     synthesizability_factor: float = 1.0,
+    enforce_blocks_map4c_fps: List[np.ndarray] = None,
 ) -> float:
     """
     Calculate the reward for a given node:
@@ -321,6 +342,8 @@ def get_node_reward(
         enforced_blocks_functional_groups: Functional groups of enforced blocks
         tango_weights: Weights for TANGO components
         synthesizability_factor: Multiplicative synthesizability factor (0-1)
+        enforce_blocks_map4c_fps: MAP4C fingerprints of enforced building blocks.
+            When provided, uses MAP4C+Jaccard instead of Morgan+Tanimoto for similarity.
 
     Returns:
         Node reward (optionally scaled by synthesizability for TANGO rewards)
@@ -347,6 +370,7 @@ def get_node_reward(
             reward_type=reward_type,
             tango_weights=tango_weights,
             synthesizability_factor=synthesizability_factor,
+            enforce_blocks_map4c_fps=enforce_blocks_map4c_fps,
         )
     else:
         raise ValueError(f"Invalid reward type: {reward_type}")

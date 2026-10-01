@@ -119,11 +119,17 @@ class SMILESTokenizer:
 
 
 def create_vocabulary(smiles: np.ndarray[str], tokenizer) -> Vocabulary:
-    """Creates a Vocabulary given a dataset of SMILES."""
+    """Creates a Vocabulary given a dataset of sequences (SMILES or HELM)."""
     tokens = set()
     for smi in smiles:
         tokens.update(tokenizer.tokenize(smi, with_begin_and_end=False))
 
     vocabulary = Vocabulary()
-    vocabulary.update(["$", "^"] + sorted(tokens))  # end token is 0 (also counts as padding)
+    # Get begin/end tokens from tokenizer (backward compatible with SMILES)
+    if hasattr(tokenizer, "get_end_token"):
+        end_token = tokenizer.get_end_token()
+        begin_token = tokenizer.get_begin_token()
+    else:
+        end_token, begin_token = "$", "^"
+    vocabulary.update([end_token, begin_token] + sorted(tokens))  # end token is 0 (also counts as padding)
     return vocabulary

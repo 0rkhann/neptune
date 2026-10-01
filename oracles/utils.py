@@ -66,12 +66,22 @@ from oracles.xtb.molecular_dipole import MolecularDipole
 from oracles.docking.geam_oracle import GEAMOracle
 from oracles.docking.quickvina2 import QuickVina2
 
+# Peptidomimetic
+from oracles.peptidomimetic.topological_potential_field import TopologicalPotentialField
+from oracles.peptidomimetic.peptide_length import PeptideLength
+
 
 def construct_oracle_component(
     oracle_component_parameters: OracleComponentParameters,
+    synth_checker=None,
 ) -> OracleComponent:
     """
     Matches the OracleComponent name and returns the OracleComponent class.
+
+    Args:
+        oracle_component_parameters: Configuration for the component.
+        synth_checker: Optional shared SynthesizabilityChecker instance,
+            passed to components that need decomposition (PeptideLength, SynthesizabilityFactor).
     """
     name = oracle_component_parameters.name
     # Similarity metrics
@@ -129,7 +139,7 @@ def construct_oracle_component(
     elif name == "freedom":
         return Freedom(oracle_component_parameters)
     elif name == "synthesizability_factor":
-        return SynthesizabilityFactor(oracle_component_parameters)
+        return SynthesizabilityFactor(oracle_component_parameters, synth_checker=synth_checker)
     # Docking
     elif name == "dockstream":
         return DockStream(oracle_component_parameters)
@@ -169,6 +179,11 @@ def construct_oracle_component(
         return GEAMOracle(oracle_component_parameters)
     elif name == "quickvina2":
         return QuickVina2(oracle_component_parameters)
+    # Peptidomimetic
+    elif name == "topological_potential_field":
+        return TopologicalPotentialField(oracle_component_parameters)
+    elif name == "peptide_length":
+        return PeptideLength(oracle_component_parameters, synth_checker=synth_checker)
     # TODO: Pharmacophore and Shape Match
     # TODO: MD
     else:

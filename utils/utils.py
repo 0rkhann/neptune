@@ -16,11 +16,22 @@ def set_seed_everywhere(seed: int, device: str):
 
 def setup_logging(logging_path: str):
     """Sets up logging to a file and console."""
-    logging.basicConfig(filename=logging_path, level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-    console = logging.StreamHandler()
-    console.setLevel(logging.INFO)
-    console.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-    logging.getLogger("").addHandler(console)
+    root_logger = logging.getLogger("")
+    root_logger.setLevel(logging.INFO)
+    fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
+    # Add file handler (basicConfig is a no-op if handlers already exist)
+    file_handler = logging.FileHandler(logging_path)
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(fmt)
+    root_logger.addHandler(file_handler)
+
+    # Add console handler if not already present
+    if not any(isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler) for h in root_logger.handlers):
+        console = logging.StreamHandler()
+        console.setLevel(logging.INFO)
+        console.setFormatter(fmt)
+        root_logger.addHandler(console)
 
 def to_tensor(array: np.array, device: str) -> torch.Tensor:
     """Convert np.array to torch.Tensor."""

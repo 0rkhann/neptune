@@ -8,6 +8,7 @@ from tqdm import tqdm
 from rdkit import Chem
 
 from models.generator import Generator
+from models.vocabulary import SMILESTokenizer
 from distribution_learning.dataclass import DistributionLearningConfiguration
 from distribution_learning.dataset.smiles_dataset import SMILESDataset
 
@@ -79,11 +80,18 @@ class DistributionLearningTrainer:
                 sampled = np.concatenate([sampled, sampled_batch])
 
             # 2. Compute Validity
-            valid = [smiles for smiles in sampled if Chem.MolFromSmiles(smiles) is not None]
+            if isinstance(self.agent.tokenizer, SMILESTokenizer):
+                # SMILES: RDKit validity
+                valid = [s for s in sampled if Chem.MolFromSmiles(s) is not None]
+            else:
+                # HELM: structural validity (has PEPTIDE1{...}$$$$ format with ≥1 monomer)
+                from utils.helm import is_helm_notation
+                valid = [s for s in sampled if is_helm_notation(s)]
             validity = len(valid) / len(sampled) * 100
 
             # 3. Compute Uniqueness
-            valid = canonicalize_smiles_batch(valid)
+            if isinstance(self.agent.tokenizer, SMILESTokenizer):
+                valid = canonicalize_smiles_batch(valid)
             unique = len(set(valid)) / len(sampled) * 100
 
             # --- Log Results ---
@@ -148,7 +156,8 @@ class DistributionLearningTrainer:
             dataset_path=self.configuration.training_dataset_path,
             batch_size=self.configuration.batch_size,
             transfer_learning=self.configuration.transfer_learning,
-            randomize=self.configuration.train_with_randomization
+            randomize=self.configuration.train_with_randomization,
+            tokenizer_type=self.configuration.tokenizer_type,
         )
         train_dataloader = DataLoader(
                 dataset=train_dataset, 

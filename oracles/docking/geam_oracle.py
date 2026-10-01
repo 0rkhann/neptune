@@ -243,28 +243,43 @@ class GEAMOracle(OracleComponent):
         1. QuickVina 2 Docking
         2. QED
         3. SA Score
+
+    Conforms to the standard OracleComponent interface: __call__ returns a single
+    np.ndarray of aggregated rewards. Sub-component values are available via
+    get_component_breakdown() for oracle_history tracking.
     """
     def __init__(self, parameters: OracleComponentParameters):
         super().__init__(parameters)
         self.vina_oracle = DockingVina(parameters.specific_parameters["target"])
-        
+        # Sub-component results from the last __call__ (for oracle_history)
+        self._last_raw_vina = None
+        self._last_qed = None
+        self._last_raw_sa = None
+
     def __call__(self, mols: np.ndarray[Mol]) -> np.ndarray[float]:
         smiles = np.vectorize(Chem.MolToSmiles)(mols)
-        return self._compute_property(smiles, mols)
-    
-    def _compute_property(
-        self, 
-        smiles: np.ndarray[str], 
-        mols: np.ndarray[Mol],
-    ) -> Tuple[np.ndarray[float], np.ndarray[float], np.ndarray[float], np.ndarray[float]]:
-        """
-        Run GEAM's Oracle and return the aggregated reward.
-        """
         raw_vina, vina_rewards = reward_vina(smiles, self.vina_oracle)
         qed_rewards = reward_qed(mols)
         raw_sa, sa_rewards = reward_sa(mols)
         # Formula used in GEAM paper
         aggregated_rewards = (np.clip(vina_rewards, 0, 20) / 20) * (qed_rewards) * (sa_rewards)
-        # Failed Vina scores are -99.9, multiple these by -1 to make them 99.9 for easier parsing later
+        # Failed Vina scores are -99.9, multiply by -1 to make them 99.9 for easier parsing later
         raw_vina[raw_vina == -99.9] = 99.9
-        return (raw_vina, qed_rewards, raw_sa, aggregated_rewards)
+        # Store sub-component results for history tracking
+        self._last_raw_vina = raw_vina
+        self._last_qed = qed_rewards
+        self._last_raw_sa = raw_sa
+        return aggregated_rewards
+
+    def calculate_reward(self, mols: np.ndarray[Mol], oracle_calls: int) -> Tuple[np.ndarray[float], np.ndarray[float]]:
+        """GEAM does its own internal reward shaping, so raw == reward."""
+        aggregated_rewards = self(mols)
+        return aggregated_rewards, aggregated_rewards
+
+    def get_component_breakdown(self) -> dict:
+        """Return sub-component values from the last __call__ for oracle_history."""
+        return {
+            "raw_vina": self._last_raw_vina,
+            "qed": self._last_qed,
+            "raw_sa": self._last_raw_sa,
+        }

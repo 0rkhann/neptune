@@ -18,11 +18,18 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 if device == "cpu":
     from models.utils.mamba_cpu_blocks import Mamba, Block, RMSNorm, layer_norm_fn, rms_norm_fn
 else:
-    from mamba_ssm.modules.mamba_simple import Mamba, Block
+    from mamba_ssm.modules.mamba_simple import Mamba
+    try:
+        from mamba_ssm.modules.mamba_simple import Block
+    except ImportError:
+        from mamba_ssm.modules.block import Block
     try:
         from mamba_ssm.ops.triton.layernorm import RMSNorm, layer_norm_fn, rms_norm_fn
     except ImportError:
-        RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
+        try:
+            from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn, rms_norm_fn
+        except ImportError:
+            RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
 
 
 _MODEL_REGISTRY = {}
@@ -58,13 +65,25 @@ def create_block(
     norm_cls = partial(
         nn.LayerNorm if not rms_norm else RMSNorm, eps=norm_epsilon, **factory_kwargs
     )
-    block = Block(
-        d_model,
-        mixer_cls,
-        norm_cls=norm_cls,
-        fused_add_norm=fused_add_norm,
-        residual_in_fp32=residual_in_fp32,
-    )
+    try:
+        # New mamba_ssm API requires mlp_cls; pass nn.Identity for no-op MLP
+        block = Block(
+            d_model,
+            mixer_cls,
+            nn.Identity,
+            norm_cls=norm_cls,
+            fused_add_norm=fused_add_norm,
+            residual_in_fp32=residual_in_fp32,
+        )
+    except TypeError:
+        # Old mamba_ssm API (no mlp_cls argument)
+        block = Block(
+            d_model,
+            mixer_cls,
+            norm_cls=norm_cls,
+            fused_add_norm=fused_add_norm,
+            residual_in_fp32=residual_in_fp32,
+        )
     block.layer_idx = layer_idx
     return block
 

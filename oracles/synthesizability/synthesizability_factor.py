@@ -63,12 +63,13 @@ class SynthesizabilityFactor(OracleComponent):
         power: Exponent for the s-factor (default: 1.0) -> returns s^power
     """
 
-    def __init__(self, parameters: OracleComponentParameters):
+    def __init__(self, parameters: OracleComponentParameters, synth_checker=None):
         """
         Initialize synthesizability factor oracle.
 
         Args:
             parameters: Oracle component parameters (from Saturn's config)
+            synth_checker: Optional shared SynthesizabilityChecker instance
         """
         super().__init__(parameters)
 
@@ -91,8 +92,11 @@ class SynthesizabilityFactor(OracleComponent):
         print(f"  - Building blocks library: {enforced_structures}")
         print(f"  - Power (exponent): {self.power}")
 
-        # Initialize synthesizability checker
-        self.synth_checker = SynthesizabilityChecker(enforced_structures)
+        # Use shared checker if provided, otherwise create a new one
+        if synth_checker is not None:
+            self.synth_checker = synth_checker
+        else:
+            self.synth_checker = SynthesizabilityChecker(enforced_structures)
 
         # Store sequences for tracking (updated in __call__)
         self.last_sequences = []

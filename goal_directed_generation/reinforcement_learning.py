@@ -83,8 +83,14 @@ class ReinforcementLearningAgent:
         # Seed the Replay Buffer (if applicable)
         self.oracle = self.replay_buffer.prepopulate_buffer(self.oracle)
 
-        # Diversity Filter
-        self.diversity_filter = DiversityFilter(configuration.diversity_filter)
+        # Diversity Filter — share Oracle's SynthesizabilityChecker to avoid redundant instances
+        shared_synth_checker = getattr(self.oracle, 'synth_checker', None)
+        self.diversity_filter = DiversityFilter(
+            configuration.diversity_filter, synth_checker=shared_synth_checker
+        )
+
+        # Share SynthesizabilityChecker between DiversityFilter and ReplayBuffer (SidechainFingerprint mode)
+        self.diversity_filter.configure_replay_buffer(self.replay_buffer)
 
         # Hallucinated Memory
         self.execute_hallucinated_memory = (
@@ -125,6 +131,10 @@ class ReinforcementLearningAgent:
         # Best Agent checkpointing
         self.best_agent_reward = float("-inf")
         self.patience = 0
+
+        # Milestone checkpoint flags (for interpretability analysis)
+        self._saved_1k = False
+        self._saved_5k = False
 
         # Set up logging
         log_dir = os.path.dirname(logging_path)
@@ -269,21 +279,28 @@ class ReinforcementLearningAgent:
                     loss = torch.cat((loss, augmented_memory_loss), 0)
                     self.backpropagate(loss)
 
-            # 18. Intermediate results write-out
-            if self.oracle.calls > self.logging_frequency * self.logging_multiple:
-                logging.info(
-                    f"Logging intermediate results at {self.oracle.calls} oracle calls."
-                )
-                self._write_out_results()
-                self.agent.save(
-                    os.path.join(
-                        self.model_checkpoints_dir,
-                        f"{self.agent.model_architecture}_{self.oracle.calls}_agent.ckpt",
-                    )
-                )
-                self.logging_multiple += 1
+            # 18. Write oracle history every step (cheap CSV dump)
+            self._write_oracle_history()
 
-            # 19. Checkpoint best Agent (by average reward)
+            # Save model checkpoints at 1k and 5k oracle calls
+            if not self._saved_1k and self.oracle.calls >= 1000:
+                self.agent.save(
+                    os.path.join(self.model_checkpoints_dir, "agent_1k.ckpt")
+                )
+                self._saved_1k = True
+                logging.info(
+                    f"Saved 1k checkpoint at {self.oracle.calls} oracle calls."
+                )
+            if not self._saved_5k and self.oracle.calls >= 5000:
+                self.agent.save(
+                    os.path.join(self.model_checkpoints_dir, "agent_5k.ckpt")
+                )
+                self._saved_5k = True
+                logging.info(
+                    f"Saved 5k checkpoint at {self.oracle.calls} oracle calls."
+                )
+
+            # Checkpoint best Agent (by average reward)
             if (np.mean(penalized_rewards) > self.best_agent_reward) and (
                 validity > 0.5
             ):
@@ -395,6 +412,11 @@ class ReinforcementLearningAgent:
         self.agent = Generator.load_from_file(self.initial_agent_path, self.device)
         logging.info(f"Agent reset to initial checkpoint: {self.initial_agent_path}")
 
+    def _write_oracle_history(self):
+        """Write oracle_history.csv to disk (called every step)."""
+        base_save_path = os.path.dirname(self.logging_path)
+        self.oracle.write_out_oracle_history(base_save_path)
+
     def _write_out_results(self):
         """
         Writes out the following results:
@@ -405,7 +427,7 @@ class ReinforcementLearningAgent:
             5. Syntheseus Synthesis Graphs
         """
         base_save_path = os.path.dirname(self.logging_path)
-        self.oracle.write_out_oracle_history(base_save_path)
+        self._write_oracle_history()
         self.oracle.write_out_repeat_history(base_save_path)
 
         if self.execute_beam_enumeration:
