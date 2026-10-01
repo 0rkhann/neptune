@@ -25,18 +25,18 @@ Config example
 
 import numpy as np
 from rdkit import Chem
-from pathlib import Path
 
 from oracles.oracle_component import OracleComponent
 from oracles.dataclass import OracleComponentParameters
 
 try:
     from src.genai_utils.synthesizability import SynthesizabilityChecker
+    from src.genai_utils.building_blocks import default_building_blocks_path
 except ImportError as e:
     raise ImportError(
-        "Failed to import SynthesizabilityChecker from GenAI4Peptidomimetic_native. "
-        "Please install the package with: "
-        "pip install -e /path/to/GenAI4Peptidomimetic_native"
+        "Failed to import GenAI4Peptidomimetic_native. Install it with "
+        "'pip install -e .' from a checkout of "
+        "https://github.com/schwallergroup/GenAI4Peptidomimetic"
     ) from e
 
 
@@ -53,15 +53,9 @@ class PeptideLength(OracleComponent):
 
         self.max_length = int(parameters.specific_parameters.get("max_length", 3))
 
-        default_bb_path = (
-            Path("/work/liac/orkhan/GenAI4Peptidomimetic_native")
-            / "data"
-            / "datasets"
-            / "chuckles_compatible_1121_bb.csv"
-        )
-        enforced_structures = parameters.specific_parameters.get(
-            "enforced_structures", str(default_bb_path)
-        )
+        enforced_structures = parameters.specific_parameters.get("enforced_structures")
+        if enforced_structures is None:
+            enforced_structures = str(default_building_blocks_path())
 
         print("[PeptideLength] Initializing with:")
         print(f"  - max_length: {self.max_length}")

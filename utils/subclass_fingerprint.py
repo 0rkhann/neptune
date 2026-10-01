@@ -15,7 +15,7 @@ Core logic (monomer_to_subclass, get_subclass_fingerprint, get_monomer_fingerpri
 lives in GenAI4Peptidomimetic_native (src.genai_utils.helm) and is re-exported here.
 
 IMPORTANT: Requires GenAI4Peptidomimetic_native to be installed as a package.
-Install with: pip install -e /path/to/GenAI4Peptidomimetic_native
+Install with: pip install -e . from a checkout of that repository.
 """
 
 # Import and re-export from GenAI4Peptidomimetic_native
@@ -34,5 +34,6 @@ except ImportError as e:
     raise ImportError(
         "GenAI4Peptidomimetic_native package is required for HELM diversity filtering. "
         f"Original error: {e}\n"
-        "Please install it with: pip install -e /path/to/GenAI4Peptidomimetic_native"
+        "Install it with 'pip install -e .' from a checkout of "
+        "https://github.com/schwallergroup/GenAI4Peptidomimetic"
     )

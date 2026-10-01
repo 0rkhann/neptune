@@ -5,12 +5,11 @@ Returns the fraction of building blocks that are in a provided library:
     s = (# of building blocks in library) / (total # of building blocks)
 
 IMPORTANT: This oracle requires GenAI4Peptidomimetic_native to be installed as a package.
-Install with: pip install -e /path/to/GenAI4Peptidomimetic_native
+Install with: pip install -e . from a checkout of that repository.
 """
 
 import numpy as np
 from rdkit import Chem
-from pathlib import Path
 
 from oracles.oracle_component import OracleComponent
 from oracles.dataclass import OracleComponentParameters
@@ -18,11 +17,12 @@ from oracles.dataclass import OracleComponentParameters
 # Import synthesizability checker from GenAI4Peptidomimetic_native package
 try:
     from src.genai_utils.synthesizability import SynthesizabilityChecker
+    from src.genai_utils.building_blocks import default_building_blocks_path
 except ImportError as e:
     raise ImportError(
-        "Failed to import SynthesizabilityChecker from GenAI4Peptidomimetic_native. "
-        "Please install the package with: "
-        "pip install -e /work/liac/orkhan/GenAI4Peptidomimetic_native"
+        "Failed to import GenAI4Peptidomimetic_native. Install it with "
+        "'pip install -e .' from a checkout of "
+        "https://github.com/schwallergroup/GenAI4Peptidomimetic"
     ) from e
 
 
@@ -74,16 +74,9 @@ class SynthesizabilityFactor(OracleComponent):
         super().__init__(parameters)
 
         # Get building blocks library path from config or use default
-        default_bb_path = (
-            Path("/work/liac/orkhan/GenAI4Peptidomimetic_native")
-            / "data"
-            / "datasets"
-            / "chuckles_compatible_1121_bb.csv"
-        )
-
-        enforced_structures = parameters.specific_parameters.get(
-            "enforced_structures", str(default_bb_path)
-        )
+        enforced_structures = parameters.specific_parameters.get("enforced_structures")
+        if enforced_structures is None:
+            enforced_structures = str(default_building_blocks_path())
 
         # Power parameter (exponent for s-factor)
         self.power = parameters.specific_parameters.get("power", 1.0)
