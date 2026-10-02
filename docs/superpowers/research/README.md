@@ -1,7 +1,7 @@
 # Research corpus — peptide representation benchmark
 
 Background research gathered while designing a representation-controlled peptide
-optimization benchmark. Eleven files, ~6,600 lines, every claim carrying a URL
+optimization benchmark. Twelve files, ~7,100 lines, every claim carrying a URL
 and year.
 
 ## Provenance, and what that means for using these
@@ -37,6 +37,7 @@ single unreviewed runs, not validated experiments.
 | `benchmark-figure-conventions.md` | what benchmark and critique papers actually plot; PMO's parity-scatter form; variance reporting norms | no |
 | `scale-sweep-protocols.md` | rankings do flip with scale, including for tokenizers; three sizes over ~10× is the credible minimum | yes — computed embedding-fraction table |
 | `architecture-granularity-interaction.md` | tokenizer span ≈28 points vs architecture span ≈1.7 in chemistry; MambaByte's claim is memory, not inductive bias | no |
+| `amp-oracle-dependencies.md` | BATTLE-AMP's repo ships 37,565 pre-generated shuffled negatives (MIT); Macrel returns AMP and hemolytic probability in one call; three licence traps | yes — Macrel 1.6.1 and HemoPI2 installed and timed; FASTA counts verified by download |
 
 ## Known disagreements and corrections
 
