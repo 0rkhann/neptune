@@ -44,10 +44,17 @@ single unreviewed runs, not validated experiments.
 Places where this corpus contradicts itself or corrected an earlier claim.
 Resolve these against the primary source before citing:
 
-- **Ciepliński et al. docking vs molecular weight.** One agent reported
-  `r = −0.79`; a later agent that read the paper reports **no numeric
-  coefficient was published**, only the phrase "moderately strong correlation".
-  Unresolved. Do not cite the number.
+- **Ciepliński et al. docking vs molecular weight — RESOLVED.** Checked against
+  the arXiv PDF (2006.16955). Both agents were partly right. The **body text**
+  says only "a moderately strong correlation between docking scores and the
+  number of rotable bonds or molecular weight"; the **numbers are printed inside
+  the figure panels**, which a text-focused read misses. Figure 6 reports four
+  docking-score-vs-molecular-weight correlations across four targets (5HT1B,
+  5HT2B, ACM2, CYP2D6): **r = −0.79, −0.79, −0.68 and −0.01**. Figure 7, for
+  rotatable bonds: −0.64, −0.64, −0.68, −0.34. The paper notes "the correlations
+  are weaker for CYP2D6, which may be caused by a bigger binding site".
+  **Cite the range, not the single value** — quoting −0.79 alone overstates a
+  result that spans −0.01 to −0.79 depending on target.
 - **kraken conformer drift.** The "1% to >75%" range was initially applied to
   electronic descriptors. It is not: the >75% figure is for *steric* descriptors
   (octant volumes). The kraken paper states electronic properties are "generally
