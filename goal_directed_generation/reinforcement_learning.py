@@ -56,6 +56,24 @@ class ReinforcementLearningAgent:
         # In case the Agent is to be trained on CPU, move also the Prior to CPU to avoid tensors on different devices
         self.prior.network.to(self.device)
 
+        # Optional override of the checkpoint's token budget. Needed to compare
+        # tokenizers at a matched MOLECULE length: the stored value counts tokens,
+        # so one number means ~128 residues at a 1190-monomer vocabulary and ~8 at
+        # a 34-character one. Refused for the decoder, whose positional encoding is
+        # allocated at a fixed size, where raising it would silently truncate.
+        self.max_sequence_length_override = (
+            configuration.reinforcement_learning.max_sequence_length
+        )
+        if self.max_sequence_length_override is not None:
+            if configuration.model_architecture == "decoder":
+                raise ValueError(
+                    "max_sequence_length cannot be overridden for the 'decoder' "
+                    "architecture: its positional encoding is allocated at a fixed "
+                    "size. Retrain with the desired length instead."
+                )
+            self.prior.max_sequence_length = self.max_sequence_length_override
+            self.agent.max_sequence_length = self.max_sequence_length_override
+
         # Store initial agent path for reset (user-provided best checkpoint)
         self.initial_agent_path = configuration.reinforcement_learning.agent
 
@@ -410,6 +428,11 @@ class ReinforcementLearningAgent:
             )
 
         self.agent = Generator.load_from_file(self.initial_agent_path, self.device)
+        # Re-apply the override: load_from_file restores the checkpoint's own token
+        # budget, so without this a drift-guard reset silently reverts the agent to
+        # the stored length mid-run.
+        if self.max_sequence_length_override is not None:
+            self.agent.max_sequence_length = self.max_sequence_length_override
         logging.info(f"Agent reset to initial checkpoint: {self.initial_agent_path}")
 
     def _write_oracle_history(self):
