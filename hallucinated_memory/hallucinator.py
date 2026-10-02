@@ -65,16 +65,16 @@ class Hallucinator(ABC):
 
             # If Sequence-based Hallucinator, Tanimoto distance relative to the parent sequence
             if isinstance(parent, Chem.Mol):
-                parent_fp = GetMorganFingerprintAsBitVect(parent, radius=3, nBits=2048)
+                parent_fp = GetMorganFingerprintAsBitVect(parent, radius=3, nBits=2048, useChirality=True)
                 for h in hallucinations:
-                    h_fp = GetMorganFingerprintAsBitVect(h, radius=3, nBits=2048)
+                    h_fp = GetMorganFingerprintAsBitVect(h, radius=3, nBits=2048, useChirality=True)
                     tanimoto_distances.append(TanimotoSimilarity(parent_fp, h_fp))
-        
+
             # If GA-based Hallucinator, Tanimoto distance relative to entire buffer
             elif isinstance(parent, list):
-                parent_fps = [GetMorganFingerprintAsBitVect(p, radius=3, nBits=2048) for p in parent]
+                parent_fps = [GetMorganFingerprintAsBitVect(p, radius=3, nBits=2048, useChirality=True) for p in parent]
                 for h in hallucinations:
-                    h_fp = GetMorganFingerprintAsBitVect(h, radius=3, nBits=2048)
+                    h_fp = GetMorganFingerprintAsBitVect(h, radius=3, nBits=2048, useChirality=True)
                     # average Tanimoto distance of each hallucination to the entire buffer
                     tanimoto_distances.append(np.mean(BulkTanimotoSimilarity(h_fp, parent_fps)))
             
